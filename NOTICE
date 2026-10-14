@@ -1,2 +1,18 @@
 Spreedly Composer Java Server SDK
 Copyright 2025-2026 Spreedly, Inc.
+
+This SDK depends on the following libraries at runtime. Maven resolves them
+alongside the SDK; they are not bundled in its JAR. Full license texts are in
+THIRD-PARTY-LICENSES.
+
+- com.google.code.gson:gson (Apache-2.0)
+- com.google.errorprone:error_prone_annotations (Apache-2.0)
+- com.squareup.okhttp3:okhttp (Apache-2.0)
+- com.squareup.okio:okio (Apache-2.0)
+- com.squareup.okio:okio-jvm (Apache-2.0)
+- org.apache.commons:commons-lang3 (Apache-2.0)
+- org.jetbrains:annotations (Apache-2.0)
+- org.jetbrains.kotlin:kotlin-stdlib (Apache-2.0)
+- org.jetbrains.kotlin:kotlin-stdlib-common (Apache-2.0)
+- org.jetbrains.kotlin:kotlin-stdlib-jdk7 (Apache-2.0)
+- org.jetbrains.kotlin:kotlin-stdlib-jdk8 (Apache-2.0)
