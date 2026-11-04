@@ -402,10 +402,10 @@ Each run writes a coverage report to `target/site/jacoco/index.html`.
 
 ### Building
 
-To build the project and install it to your local Maven repository (`-Dgpg.skip` skips release signing):
+To build the project and install it to your local Maven repository:
 
 ```sh
-mvn clean install -Dgpg.skip
+mvn clean install
 ```
 
 To generate JavaDoc:
@@ -416,7 +416,7 @@ mvn javadoc:javadoc
 
 ### Testing with the examples
 
-To try local SDK changes end to end, clone [Composer examples](https://github.com/spreedly/composer-examples) next to this repository, run `mvn clean install -Dgpg.skip` here to install your build into your local Maven repository, and run the `server/java` example as the examples README describes. The example's `pom.xml` must depend on the version in this repository's `pom.xml`:
+To try local SDK changes end to end, clone [Composer examples](https://github.com/spreedly/composer-examples) next to this repository, run `mvn clean install` here to install your build into your local Maven repository, and run the `server/java` example as the examples README describes. The example's `pom.xml` must depend on the version in this repository's `pom.xml`:
 
 ```xml
 <dependency>
