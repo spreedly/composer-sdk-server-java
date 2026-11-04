@@ -1,0 +1,275 @@
+name: Publish
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  MAVEN_ARGS: -B --no-transfer-progress
+
+jobs:
+  # Runs all dependency code (Maven and its plugins, tests, the SBOM tool)
+  # without the release environment, so nothing here can read the Maven
+  # Central token or the signing key.
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      group: ${{ steps.check.outputs.group }}
+      artifact: ${{ steps.check.outputs.artifact }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the main ancestry check can see main.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The library targets Java 11; the tests also run on 25, which builds
+      # the release.
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            11
+            25
+
+      - name: Check tag, version and CHANGELOG.md
+        id: check
+        run: |
+          evaluate() {
+            mvn -q org.apache.maven.plugins:maven-help-plugin:3.5.2:evaluate -Dexpression="$1" -DforceStdout
+          }
+          GROUP="$(evaluate project.groupId)"
+          ARTIFACT="$(evaluate project.artifactId)"
+          VERSION="$(evaluate project.version)"
+          if [[ "${GITHUB_REF_NAME}" != "v${VERSION}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match pom.xml version ${VERSION}"
+            exit 1
+          fi
+          if ! grep -qF "SDK_VERSION = \"${VERSION}\";" src/main/java/com/spreedly/composer/messages/Constants.java; then
+            echo "SDK_VERSION in Constants.java does not match pom.xml version ${VERSION}"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "Tagged commit ${GITHUB_SHA} is not on main"
+            exit 1
+          fi
+          HEADING="$(grep -m1 -E "^## ${VERSION//./\\.}( |$)" CHANGELOG.md || true)"
+          if [[ -z "${HEADING}" || "${HEADING,,}" == *unreleased* ]]; then
+            echo "CHANGELOG.md needs a released '## ${VERSION}' section"
+            exit 1
+          fi
+          awk -v v="${VERSION}" '/^## / { if (found) exit; if ($2 == v) { found = 1; next } } found' CHANGELOG.md > release-notes.md
+          {
+            echo "group=${GROUP}"
+            echo "artifact=${ARTIFACT}"
+            echo "version=${VERSION}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Test on Java 11
+        run: JAVA_HOME="${JAVA_HOME_11_X64}" mvn test
+
+      # A clean build on 25, so the tests run against the classes that ship.
+      # Maven Central requires sources and javadoc jars next to the jar, and
+      # the POM under the same name.
+      - name: Test on Java 25 and package
+        env:
+          ARTIFACT: ${{ steps.check.outputs.artifact }}
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          mvn clean package
+          BASE="${ARTIFACT}-${VERSION}"
+          mkdir dist
+          cp "target/${BASE}.jar" "target/${BASE}-sources.jar" "target/${BASE}-javadoc.jar" dist/
+          cp pom.xml "dist/${BASE}.pom"
+          (cd dist && sha256sum -- *) > SHA256SUMS
+
+      # The SBOM is Maven's own resolution of the runtime dependencies, so
+      # auditing it skips test dependencies. The hash pins the scanner
+      # download.
+      - name: Write SBOM and audit runtime dependencies
+        env:
+          OSV_SCANNER_VERSION: 2.7.0
+          OSV_SCANNER_SHA256: 160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b
+        run: |
+          mvn -q org.cyclonedx:cyclonedx-maven-plugin:2.9.3:makeBom -DincludeTestScope=false -DoutputFormat=json -DoutputName=sbom.cdx
+          cp target/sbom.cdx.json sbom.cdx.json
+          curl -sSfLo "${RUNNER_TEMP}/osv-scanner" "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_SCANNER_SHA256}  ${RUNNER_TEMP}/osv-scanner" | sha256sum -c -
+          chmod +x "${RUNNER_TEMP}/osv-scanner"
+          "${RUNNER_TEMP}/osv-scanner" scan source -L sbom.cdx.json
+
+      # Scans the files users receive. The hash pins the download; --redact
+      # keeps a found secret's value out of the public log while --verbose
+      # still shows where it is.
+      - name: Scan package for secrets
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          ARCHIVE="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${ARCHIVE}"
+          echo "${GITLEAKS_SHA256}  ${ARCHIVE}" | sha256sum -c -
+          tar -xzf "${ARCHIVE}" gitleaks
+          mkdir "${RUNNER_TEMP}/package"
+          for FILE in dist/*.jar; do
+            unzip -q "${FILE}" -d "${RUNNER_TEMP}/package/$(basename "${FILE}" .jar)"
+          done
+          cp dist/*.pom "${RUNNER_TEMP}/package/"
+          ./gitleaks dir "${RUNNER_TEMP}/package" --redact --verbose
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: |
+            dist/
+            SHA256SUMS
+            sbom.cdx.json
+            release-notes.md
+
+  # Signs, bundles and uploads with tools already on the runner, so no Maven
+  # or plugin code runs next to the token and the signing key.
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # Required reviewers and the v* tag rule live on this environment, along
+    # with the Maven Central token and the signing key.
+    environment: release
+    permissions:
+      contents: read
+    env:
+      GROUP: ${{ needs.build.outputs.group }}
+      ARTIFACT: ${{ needs.build.outputs.artifact }}
+      VERSION: ${{ needs.build.outputs.version }}
+      KEY_FINGERPRINT: ${{ vars.PGP_KEY_FINGERPRINT }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+
+      - name: Verify package checksums
+        working-directory: dist
+        run: sha256sum -c ../SHA256SUMS
+
+      - name: Check version is not already on Maven Central
+        run: |
+          URL="https://repo1.maven.org/maven2/${GROUP//.//}/${ARTIFACT}/${VERSION}/${ARTIFACT}-${VERSION}.pom"
+          STATUS="$(curl -sS -o /dev/null -w "%{http_code}" "${URL}")"
+          if [[ "${STATUS}" == "200" ]]; then
+            echo "${GROUP}:${ARTIFACT}:${VERSION} is already on Maven Central"
+            exit 1
+          fi
+          if [[ "${STATUS}" != "404" ]]; then
+            echo "Expected HTTP 200 or 404 from ${URL}, got ${STATUS}"
+            exit 1
+          fi
+
+      # The ! makes gpg sign with the primary key, which Maven Central
+      # requires, even if the key has a signing subkey.
+      - name: Sign
+        env:
+          PGP_PRIVATE_KEY: ${{ secrets.PGP_PRIVATE_KEY }}
+          PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
+        run: |
+          if [[ ! "${KEY_FINGERPRINT}" =~ ^[0-9A-F]{40}$ ]]; then
+            echo "PGP_KEY_FINGERPRINT must be the primary key's 40-character fingerprint in uppercase, without spaces"
+            exit 1
+          fi
+          export GNUPGHOME="${RUNNER_TEMP}/gnupg-sign"
+          mkdir -m 700 "${GNUPGHOME}"
+          printf '%s\n' "${PGP_PRIVATE_KEY}" | gpg --batch --import
+          for FILE in dist/*; do
+            printf '%s' "${PGP_PASSPHRASE}" | gpg --batch --pinentry-mode loopback --passphrase-fd 0 --local-user "${KEY_FINGERPRINT}!" --armor --detach-sign "${FILE}"
+          done
+          gpgconf --kill gpg-agent
+
+      # Maven Central checks signatures against public keyservers, so this
+      # checks them against the published key before uploading.
+      - name: Verify signatures against the published key
+        run: |
+          export GNUPGHOME="${RUNNER_TEMP}/gnupg-verify"
+          mkdir -m 700 "${GNUPGHOME}"
+          curl -sSf "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x${KEY_FINGERPRINT}" | gpg --batch --import
+          for FILE in dist/*.asc; do
+            SIGNER="$(gpg --batch --status-fd 1 --verify "${FILE}" "${FILE%.asc}" 2> /dev/null | awk '$2 == "VALIDSIG" { print $3 }')"
+            if [[ "${SIGNER}" != "${KEY_FINGERPRINT}" ]]; then
+              echo "${FILE} is not a valid signature by ${KEY_FINGERPRINT}"
+              exit 1
+            fi
+          done
+
+      # Maven Central needs MD5 and SHA-1 files for each file it publishes,
+      # but not for signatures.
+      - name: Bundle
+        run: |
+          DIR="${RUNNER_TEMP}/bundle/${GROUP//.//}/${ARTIFACT}/${VERSION}"
+          mkdir -p "${DIR}"
+          cp dist/* "${DIR}/"
+          for FILE in dist/*.jar dist/*.pom; do
+            NAME="$(basename "${FILE}")"
+            md5sum "${FILE}" | cut -d ' ' -f 1 > "${DIR}/${NAME}.md5"
+            sha1sum "${FILE}" | cut -d ' ' -f 1 > "${DIR}/${NAME}.sha1"
+          done
+          (cd "${RUNNER_TEMP}/bundle" && zip -qrX ../bundle.zip .)
+
+      # AUTOMATIC publishes once Maven Central validates the bundle; the
+      # release environment's approval is the manual gate. GitHub masks the
+      # secrets but not the encoded token, so it's masked here.
+      - name: Publish to Maven Central
+        timeout-minutes: 60
+        env:
+          CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+          CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+        run: |
+          TOKEN="$(printf '%s:%s' "${CENTRAL_TOKEN_USERNAME}" "${CENTRAL_TOKEN_PASSWORD}" | base64 -w 0)"
+          echo "::add-mask::${TOKEN}"
+          HEADER="${RUNNER_TEMP}/auth-header"
+          printf 'Authorization: Bearer %s\n' "${TOKEN}" > "${HEADER}"
+          API="https://central.sonatype.com/api/v1/publisher"
+          # Prints the response body, to stderr if the request failed so it
+          # reaches the log.
+          api() {
+            if ! curl -sS --fail-with-body -H "@${HEADER}" -o "${RUNNER_TEMP}/response" "$@"; then
+              cat "${RUNNER_TEMP}/response" >&2
+              return 1
+            fi
+            cat "${RUNNER_TEMP}/response"
+          }
+          DEPLOYMENT="$(api -F "bundle=@${RUNNER_TEMP}/bundle.zip" "${API}/upload?name=${ARTIFACT}-${VERSION}&publishingType=AUTOMATIC")"
+          echo "Deployment ${DEPLOYMENT}"
+          while true; do
+            sleep 30
+            api --retry 3 -X POST "${API}/status?id=${DEPLOYMENT}" > "${RUNNER_TEMP}/status.json"
+            STATE="$(jq -r .deploymentState "${RUNNER_TEMP}/status.json")"
+            echo "${STATE}"
+            case "${STATE}" in
+              PUBLISHED) exit 0 ;;
+              FAILED)
+                jq .errors "${RUNNER_TEMP}/status.json"
+                exit 1
+                ;;
+            esac
+          done
+
+  release:
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --notes-file release-notes.md dist/* SHA256SUMS sbom.cdx.json
