@@ -30,7 +30,7 @@ The Composer Server SDK for Java makes integration with the Composer API easy an
 
 ## Related
 
-Check out the [Client SDK](https://npmjs.com/package/@dodgeball/trust-sdk-client) for how to integrate Composer into your frontend applications.
+Check out the [Client SDK](https://www.npmjs.com/package/@spreedly/composer-sdk-client) for how to integrate Composer into your frontend applications.
 
 [Composer examples](https://github.com/spreedly/composer-examples) has a runnable example server for this SDK in `server/java`, and a web client that calls it.
 
@@ -118,8 +118,12 @@ public class OrderController {
 
 ```js
 // In your frontend, with the Client SDK
+import { Composer } from "@spreedly/composer-sdk-client";
+
+const composer = new Composer("public-api-key...");
+
 const placeOrder = async (order, previousVerificationId = null) => {
-  const sourceToken = await dodgeball.getSourceToken();
+  const sourceToken = await composer.getSourceToken();
 
   const endpointResponse = await axios.post("/api/orders", { order }, {
     headers: {
@@ -135,7 +139,7 @@ const placeOrder = async (order, previousVerificationId = null) => {
     return;
   }
 
-  dodgeball.handleVerification(endpointResponse.data.verification, {
+  composer.handleVerification(endpointResponse.data.verification, {
     onVerified: async (verification) => {
       // The user completed the extra step: call your API again with the verification ID
       await placeOrder(order, verification.id);
@@ -203,7 +207,7 @@ The SDK writes JSON log lines to standard output. At the default `INFO` level it
 
 | Parameter | Required | Description |
 | --- | --- | --- |
-| `sourceToken` | Either this or `sessionId` | A token representing the device making the request. Obtained from the [Client SDK](https://npmjs.com/package/@dodgeball/trust-sdk-client). |
+| `sourceToken` | Either this or `sessionId` | A token representing the device making the request. Obtained from the [Client SDK](https://www.npmjs.com/package/@spreedly/composer-sdk-client). |
 | `sessionId` | Either this or `sourceToken` | The current session ID of the request. |
 | `userId` | No | The ID of the user in your database, once you know it (for example, after registration). |
 | `useVerificationId` | No | `checkpoint` only. The ID of a verification the user already completed. See [useVerification](#useverification). |
