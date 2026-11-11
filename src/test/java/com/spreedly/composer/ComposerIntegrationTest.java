@@ -1239,6 +1239,51 @@ public class ComposerIntegrationTest {
     }
     
     @Test
+    public void testEvent_reusedEventGetsFreshDefaultTime() throws Exception {
+        NotificationResponse mockResponse = new NotificationResponse(true, new ComposerApiError[]{});
+        mockServer.enqueue(new MockResponse()
+            .setBody(gson.toJson(mockResponse))
+            .addHeader("Content-Type", "application/json"));
+        mockServer.enqueue(new MockResponse()
+            .setBody(gson.toJson(mockResponse))
+            .addHeader("Content-Type", "application/json"));
+        
+        ApiEvent event = new ApiEvent("TEST_EVENT", new HashMap<>());
+        NotificationRequest request = new NotificationRequest();
+        request.event = event;
+        request.sessionId = "sess-123";
+        
+        composer.event(request).get(5, TimeUnit.SECONDS);
+        Thread.sleep(5);
+        composer.event(request).get(5, TimeUnit.SECONDS);
+        
+        long firstTime = gson.fromJson(mockServer.takeRequest().getBody().readUtf8(), com.google.gson.JsonObject.class)
+            .get("eventTime").getAsLong();
+        long secondTime = gson.fromJson(mockServer.takeRequest().getBody().readUtf8(), com.google.gson.JsonObject.class)
+            .get("eventTime").getAsLong();
+        assertThat(secondTime).isGreaterThan(firstTime);
+        assertThat(event.eventTime).isNull();
+    }
+    
+    @Test
+    public void testEvent_keepsCallerEventTime() throws Exception {
+        NotificationResponse mockResponse = new NotificationResponse(true, new ComposerApiError[]{});
+        mockServer.enqueue(new MockResponse()
+            .setBody(gson.toJson(mockResponse))
+            .addHeader("Content-Type", "application/json"));
+        
+        NotificationRequest request = new NotificationRequest();
+        request.event = new ApiEvent("TEST_EVENT", new HashMap<>(), 1700000000000L);
+        request.sessionId = "sess-123";
+        
+        composer.event(request).get(5, TimeUnit.SECONDS);
+        
+        long sentTime = gson.fromJson(mockServer.takeRequest().getBody().readUtf8(), com.google.gson.JsonObject.class)
+            .get("eventTime").getAsLong();
+        assertThat(sentTime).isEqualTo(1700000000000L);
+    }
+    
+    @Test
     public void testEvent_nullEvent() throws Exception {
         Composer errorLoggingComposer = Composer.builder()
             .setApiKeys("test-secret-key")

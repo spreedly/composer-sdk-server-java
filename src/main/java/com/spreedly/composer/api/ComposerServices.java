@@ -340,13 +340,14 @@ public class ComposerServices {
             OkHttpClient client = buildClient(requestTimeoutMs);
 
             try {
-                // Ensure event has timestamp
-                if (request.event != null && request.event.eventTime == null) {
-                    request.event.eventTime = System.currentTimeMillis();
+                // Default the timestamp on a copy, so a reused event gets a fresh time on each call
+                ApiEvent event = request.event;
+                if (event != null && event.eventTime == null) {
+                    event = new ApiEvent(event.type, event.data, System.currentTimeMillis());
                 }
                 
                 // Prepare request body
-                String jsonBody = gson.toJson(request.event);
+                String jsonBody = gson.toJson(event);
                 RequestBody body = RequestBody.create(jsonBody, JSON);
                 
                 // Build request

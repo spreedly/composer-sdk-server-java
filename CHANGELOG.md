@@ -21,6 +21,7 @@ First release as `com.spreedly:composer-sdk-server`. If you're upgrading from `c
 - `CheckpointResponseOptions.timeout` is an `Integer` and `sync` is a `Boolean`. A new `CheckpointRequest` has `options` `null`.
 - `checkpoint()` throws `ComposerMissingParameterException` (an `IllegalArgumentException`) before returning the future when the request, `checkpointName`, `event`, or both `sessionId` and `sourceToken` are missing. Blank strings count as missing. This happens even when the SDK is disabled.
 - `event.ip` is optional on checkpoints.
+- When `eventTime` is `null`, `event()` sends the current time. It doesn't set `eventTime` on your `ApiEvent`.
 - `event()` doesn't throw for invalid input or failed requests. It logs the problem and returns a response with `success` `false`.
 - `sync` defaults to `false` and is sent as given. With `sync` `true`, the first request waits for the workflow to finish, so set `setRequestTimeoutMs` longer than your slowest workflow.
 - `timeout` is now only how long the SDK polls, and defaults to 10 minutes. It's no longer sent to the API.
