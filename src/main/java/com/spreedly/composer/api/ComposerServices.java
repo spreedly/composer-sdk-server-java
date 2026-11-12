@@ -340,10 +340,13 @@ public class ComposerServices {
             OkHttpClient client = buildClient(requestTimeoutMs);
 
             try {
-                // Default the timestamp on a copy, so a reused event gets a fresh time on each call
+                // Send a copy with only the fields the track endpoint takes. Gson would otherwise
+                // serialize a subclass's extra fields, and defaulting the time on the copy gives a
+                // reused event a fresh time on each call.
                 ApiEvent event = request.event;
-                if (event != null && event.eventTime == null) {
-                    event = new ApiEvent(event.type, event.data, System.currentTimeMillis());
+                if (event != null) {
+                    Long eventTime = event.eventTime != null ? event.eventTime : System.currentTimeMillis();
+                    event = new ApiEvent(event.type, event.data, eventTime);
                 }
                 
                 // Prepare request body

@@ -1283,6 +1283,33 @@ public class ComposerIntegrationTest {
         assertThat(sentTime).isEqualTo(1700000000000L);
     }
     
+    static class EventWithExtraField extends ApiEvent {
+        public String region = "us-east";
+        
+        EventWithExtraField(Long eventTime) {
+            super("TEST_EVENT", new HashMap<>(), eventTime);
+        }
+    }
+    
+    @Test
+    public void testEvent_sendsOnlyTrackFields() throws Exception {
+        NotificationResponse mockResponse = new NotificationResponse(true, new ComposerApiError[]{});
+        for (Long eventTime : new Long[]{1700000000000L, null}) {
+            mockServer.enqueue(new MockResponse()
+                .setBody(gson.toJson(mockResponse))
+                .addHeader("Content-Type", "application/json"));
+        
+            NotificationRequest request = new NotificationRequest();
+            request.event = new EventWithExtraField(eventTime);
+            request.sessionId = "sess-123";
+        
+            composer.event(request).get(5, TimeUnit.SECONDS);
+        
+            com.google.gson.JsonObject body = gson.fromJson(mockServer.takeRequest().getBody().readUtf8(), com.google.gson.JsonObject.class);
+            assertThat(body.keySet()).containsExactlyInAnyOrder("type", "data", "eventTime");
+        }
+    }
+    
     @Test
     public void testEvent_nullEvent() throws Exception {
         Composer errorLoggingComposer = Composer.builder()
