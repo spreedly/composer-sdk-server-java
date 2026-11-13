@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0 (unreleased)
+## 1.0.0 (2026-11-13)
 
 First release as `com.spreedly:composer-sdk-server`. If you're upgrading from `com.dodgeballhq.protect:protect-core` 1.2.0, read **Changed** and **Removed**.
 
