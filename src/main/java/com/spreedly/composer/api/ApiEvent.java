@@ -37,7 +37,6 @@ public class ApiEvent {
     public ApiEvent(String type, Map<String, Object> data) {
         this.type = type;
         this.data = data;
-        this.eventTime = System.currentTimeMillis();
     }
     
     /**

@@ -73,8 +73,7 @@ public class ApiTest {
         
         assertThat(event.type).isEqualTo("TEST_EVENT");
         assertThat(event.data).isEqualTo(data);
-        assertThat(event.eventTime).isNotNull();
-        assertThat(event.eventTime).isGreaterThan(0L);
+        assertThat(event.eventTime).isNull();
     }
     
     @Test
